@@ -96,6 +96,7 @@ find_rotation <- function(e){
 }
 
 greatresult <- lapply(all_eye_paths[1], getFoveaSummary)
+greatresult <- lapply("/Users/currant/OCTeyes/OCT_30_replicates_20161024/1145517/OCT/292422.dcm", getFoveaSummary)
 getFoveaSummary <- function(image_file) {
   sf=8
   eye_name <- strsplit(image_file, "[/]")
@@ -127,6 +128,18 @@ getFoveaSummary <- function(image_file) {
 }
 
 
+rotate_matrix <- function(amodel, rotate_value){
+  tst_matrix <- create_matrix(0, dim(amodel)[2], 0, dim(amodel)[1])
+  rownames(tst_matrix) <- paste("x", tst_matrix[,1], "y", tst_matrix[,2], sep=".")
+  tst_matrix[,1] <- tst_matrix[,1]-(dim(amodel)[2])%/%2
+  tst_matrix[,2] <- tst_matrix[,2]-(dim(amodel)[1])%/%2
+  rotate_value_clock <- rotate_value
+  rotate_value_clock_rad <- deg2rad(rotate_value_clock)
+  rotation_matrix_tst <- matrix(c(0,1,-1,0), nrow=2)
+  rotation_matrix <- matrix(c(cos(rotate_value_clock_rad), sin(rotate_value_clock_rad), -sin(rotate_value_clock_rad), cos(rotate_value_clock_rad)), nrow=2, ncol=2)
+  rotated_amodel <- tst_matrix %*% rotation_matrix
+  return(rotated_amodel)
+}
 tst_matrix <- create_matrix(0, dim(amodel)[2], 0, dim(amodel)[1])
 rownames(tst_matrix) <- paste("x", tst_matrix[,1], "y", tst_matrix[,2], sep=".")
 tst_matrix[,1] <- tst_matrix[,1]-205

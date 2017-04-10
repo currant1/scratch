@@ -9,7 +9,7 @@ library(foveafit)
 library(colorspace)
 
 library(NISTunits)
-
+library(mgcv)
 
 ###################################
 ############FUNCTIONS##############
@@ -103,8 +103,9 @@ draw_tesselate_and_indices_wrotate <- function(fovea_coords,fovea_height, amodel
 
 
 
-tmp_mat <- create_matrix(0, dim(amodel)[2], 0, dim(amodel)[1])
-rownames(tmp_mat) <- paste("x", tmp_mat[,1], "y", tmp_mat[,2], sep="")
+tmp_mat <- create_matrix(0, ((dim(amodel)[2])-1), 0, ((dim(amodel)[1])-1))
+rownames(tmp_mat) <- paste( tmp_mat[,1], ".", tmp_mat[,2], sep="")
+id_mapping <- data.frame(id=paste( tmp_mat[,1], ".", tmp_mat[,2], sep=""), x=tmp_mat[,1], y=tmp_mat[,2], stringsAsFactors = FALSE)
 n <- 20
 d1<-dim(amodel)[2]*(1/3)
 fov_height_scale <- fovea_height*dim(amodel)[2]
@@ -120,6 +121,7 @@ tmp_mat_scale_shift[,2] <- tmp_mat_scale_shift[,2]+dist_b_fovs[2]
 tmp_mat_scale_shift_small <- tmp_mat_scale_shift
 tmp_mat_scale_shift_small[,1]<- tmp_mat_scale_shift_small[,1]/dim(amodel)[2]
 tmp_mat_scale_shift_small[,2]<- tmp_mat_scale_shift_small[,2]/dim(amodel)[1]
+tmp_mat_scale_shift_small <- tmp_mat_scale_shift_small[complete.cases(tmp_mat_scale_shift_small),]
 
 
 
@@ -143,6 +145,150 @@ make_tri_grid <- function(amodel, n){
   }
   return(indicies)
 }
+
+remove_to_square_w_rotate <- function(inds){
+  inds_square <- inds[inds [,1]>=0,]
+  inds_square <- inds_square[inds_square[,1]<=1,]
+  inds_square <- inds_square[inds_square[,2]>=0,]
+  inds_square <- inds_square[inds_square[,2]<=1,]
+  plot(inds_square)
+  return(inds_square)
+}
+
+get_triangle_ref_coords <- function(m, verticesdf){
+  all_refs <- NULL
+  triangle_groups <- seq(from=1, to=(dim(verticesdf)[1]), by=3)
+  for (x in triangle_groups){
+    small_matrix <- verticesdf[x:(x+2),]
+    inoutvalues <- in.out(small_matrix, m)
+    TRUTHS <- which(inoutvalues)
+    
+    refcoords <- NULL
+    for (y in 1:length(TRUTHS)){
+      tmp <- NULL
+      tmp <- rbind(tmp,(m[TRUTHS[y],]))
+      tmp <- cbind(tmp, as.integer((x+2)/3))
+      refcoords <- rbind(refcoords, tmp)
+    }
+    rownames(refcoords) <- rownames(m)[TRUTHS]
+    #refcoors <- cbind(rownames(m)[TRUTHS], refcoords)
+    all_refs<-rbind(all_refs,refcoords)
+    
+  }
+  return(all_refs)
+}
+
+
+tesselate_mean <- function(all_refs, amodel){
+  triangleids <- unique(all_refs[,3])
+  all_triangle_means <- NULL
+  for (x in 1:length(triangleids)){
+    xth_triangle <- subset(all_refs, all_refs[,3]==triangleids[x])
+    triangle_values=NULL
+    for (y in 1:dim(xth_triangle)[1]){
+      triangle_values <- rbind(triangle_values, amodel[(xth_triangle[y,])[1], (xth_triangle[y,])[2]])
+    }
+    triangle_mean <- colMeans(triangle_values)
+    triangle_mean <- cbind(triangle_mean, triangleids[x])
+    all_triangle_means <- rbind(all_triangle_means, triangle_mean)
+  }
+  return(all_triangle_means)
+}
+
+
+
+
+  
+
+indicies <- make_tri_grid(amodel,20)
+indicies[,2]<- round(as.numeric(indicies[,2]),3)
+sqr_inds <- remove_to_square_w_rotate(indicies)
+verticesdf <- get_triangle_vertices(sqr_inds,amodel)
+all_refs <- get_triangle_ref_coords(tmp_mat_scale_shift_small, verticesdf)
+all_refs <- all_refs[complete.cases(all_refs),]
+merged_all_refs_tmp <- merge(tmp_mat_scale_shift_small, all_refs, by=0, all=TRUE, stringsAsFactors=FALSE)
+
+
+Ids2coordinates <- function(id, original) {
+  splitid <- as.numeric(unlist(strsplit(id[1], "[.]")))
+  xcoord <- splitid[1]+1
+  ycoord <- splitid[2]+1
+  data.frame(id[1], original[ycoord,xcoord], stringsAsFactors=FALSE)
+}
+
+test <- do.call(rbind, apply(merged_all_refs_tmp, 1, Ids2coordinates, original=amodel))
+
+values_mat <- NULL
+for (x in 1:dim(merged_all_refs_tmp)[1]){
+  splitid <- strsplit(merged_all_refs_tmp[x,1], "[.]")
+  xcoord <- as.numeric(splitid[[1]][1])+1
+  ycoord <- as.numeric(splitid[[1]][2])+1
+  value_line <- data.frame(merged_all_refs_tmp[x,1], amodel[ycoord,xcoord], stringsAsFactors = FALSE)
+  values_mat <- rbind(values_mat, value_line)
+  #values_list <- c(values_list, amodel[ycoord,xcoord])
+}
+values_df <- as.data.frame(values_mat)
+merged_all_refs_tmp2 <- merge(merged_all_refs_tmp, test, by=1, all=TRUE, stringsAsFactors=FALSE)
+
+
+tri_means <- function(id){
+  small_matrix <- merged_all_refs_tmp2[which(merged_all_refs_tmp2[,6]==id),]
+  tri_mean <- mean(small_matrix[,7])
+  data.frame(id, tri_mean)
+}
+
+tri_ids <- unique(merged_all_refs_tmp2[,6])
+all_tri_means <- do.call(rbind, lapply(tri_ids, tri_means))
+colnames(merged_all_refs_tmp2) <- c("coord_id", "x", "y", "x1", "y1", "tri_id", "value")
+colnames(all_tri_means) <- c("tri_id", "mean")
+
+merged_all_refs_tmp3 <- merge(merged_all_refs_tmp2, all_tri_means, by="tri_id", all=TRUE, stringsAsFactors=FALSE)
+
+triangle_plot_m <- matrix(NA, dim(amodel)[1], dim(amodel)[2])
+triangle_plot_m_df <- as.data.frame(triangle_plot_m)
+
+plot_creator <- function(rowintable, triangle_plot_m){
+  splitid <- as.numeric(unlist(strsplit(as.character(rowintable[2]), "[.]")))
+  xcoord <- splitid[1]+1
+  ycoord <- splitid[2]+1
+  triangle_plot_m[ycoord, xcoord] <- rowintable[8]
+  return(triangle_plot_m)
+}
+
+get_final_table <- function(the_row, merged_all_refs_tmp3){
+  data.frame(the_row[2],the_row[3], merged_all_refs_tmp3[which(the_row[1]==merged_all_refs_tmp3$coord_id),8])
+}
+
+end_info <- do.call(rbind, apply(id_mapping, 1, get_final_table, merged_all_refs_tmp3=merged_all_refs_tmp3))
+
+plot_test <- apply(id_mapping, 1, plot_creator, triangle_plot_m=triangle_plot_m)
+
+f <- rasterFromXYZ(end_info)
+f_m <- as.matrix(f)
+
+coords_table <- do.call(rbind, lapply(merged_all_refs_tmp3$coord_id, sep_coords))
+
+
+plot_tesselation <- function(all_triangle_means, amodel, all_refs){
+  triangle_plot_m <- matrix(NA,dim(amodel)[1],dim(amodel)[2])
+  for (x in 1:dim(all_triangle_means)[1]){
+    triangle_value <- all_triangle_means[x,1]
+    triangle_locations <- subset(all_refs, all_refs[,3]==x )
+    for (y in 1:dim(triangle_locations)[1]){
+      x_coord <- (triangle_locations[y,])[1]
+      y_coord <- (triangle_locations[y,])[2]
+      triangle_plot_m[x_coord, y_coord] <- triangle_value
+      #triangle_plot_m[(triangle_locations[y,])[1], (triangle_locations[y,])[2]]<- triangle_value
+    }
+  }
+  image(triangle_plot_m, col=heat_hcl(12))
+  return(triangle_plot_m)
+}
+
+
+
+
+
 
 stretch_and_cut <- function(fovea_coords, fovea_height, amodel, sf, n){
   tmp_mat <- create_matrix(0, dim(amodel)[2], 0, dim(amodel)[1])
@@ -311,8 +457,8 @@ get_triangle_vertices <- function(inds_square, amodel){
       vertices <- rbind(vertices, triangle1)
     }
   }
-  vertices[,1] <- (unlist(vertices[,1]))*dim(amodel)[1]
-  vertices[,2] <- (unlist(vertices[,2]))*dim(amodel)[2]
+  #vertices[,1] <- (unlist(vertices[,1]))*dim(amodel)[1]
+  #vertices[,2] <- (unlist(vertices[,2]))*dim(amodel)[2]
   verticesdf <- matrix(c(unlist(vertices)), nrow=dim(vertices), ncol=2)
   return(verticesdf)
 }
@@ -599,7 +745,7 @@ e <- registar(image_file, debug=FALSE)
 
 enew_radian <- find_rotation(e)
 
-center_f = 0.6
+center_f = 0.8
 amodel = center_align(model, center_f)
 inds = tesselate(amodel, 10)
 
